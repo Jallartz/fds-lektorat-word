@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- FDS Lektorat für Word – Startseite (liegt einmalig auf dem statischen Host). Die App selbst kommt aktuell aus n8n. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FDS Lektorat</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>body { font: 13px/1.45 "Segoe UI", -apple-system, sans-serif; color: #5d6066; padding: 16px; background: #f5f6f2; }</style>
+</head>
+<body>
+<p id="laden">Lade FDS Lektorat …</p>
+<script>
+(function () {
+  var s = document.createElement('script');
+  s.src = 'https://fdsagent.app.n8n.cloud/webhook/lektorat-word-app?t=' + Date.now();
+  s.onerror = function () {
+    document.getElementById('laden').textContent = 'FDS Lektorat konnte nicht geladen werden. Bitte Internetverbindung prüfen und den Aufgabenbereich schließen und neu öffnen.';
+  };
+  document.body.appendChild(s);
+})();
+</script>
+</body>
+</html>
