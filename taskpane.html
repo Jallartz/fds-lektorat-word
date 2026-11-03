@@ -13,7 +13,7 @@
 <script>
 (function () {
   var s = document.createElement('script');
-  s.src = 'https://fdsagent.app.n8n.cloud/webhook/lektorat-word-app?t=' + Date.now();
+  s.src = 'lektorat-word-app.js?t=' + Date.now();
   s.onerror = function () {
     document.getElementById('laden').textContent = 'FDS Lektorat konnte nicht geladen werden. Bitte Internetverbindung prüfen und den Aufgabenbereich schließen und neu öffnen.';
   };
