@@ -194,9 +194,9 @@ function start(){
   $("login").classList.add("hidden"); $("app").classList.remove("hidden"); $("who").textContent=session.email||"";
   // aktuelle Version aus Supabase (version.json neben der ZIP) – ändert sich ohne neuen Workflow-Import
   api({action:"version"}).then(function(r){
-    var v = (r && r.version) || "1.1.0";
+    var v = (r && r.version) || "1.2.0";
     $("aktVersion").textContent = v; document.querySelector("#dlBtn .dlVer").textContent = " · Version " + v;
-  }).catch(function(){ $("aktVersion").textContent = "1.1.0"; });
+  }).catch(function(){ $("aktVersion").textContent = "1.2.0"; });
 }
 $("dlBtn").addEventListener("click", async function(){
   var s=$("dlStatus"); s.className="status load"; s.textContent="Link wird erstellt …"; $("dlBtn").disabled=true;

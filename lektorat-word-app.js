@@ -74,6 +74,79 @@
 
   function lower(s) { return String(s || '').toLocaleLowerCase('de-DE'); }
 
+  // KI-Muster: ein Leerzeichen meint jeden Leerraum (geschützt, Achtelgeviert, Tabulator) – außer in Zeichenklassen [ ]
+  function leerraum(src) {
+    let out = '', klasse = false;
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === '\\') { out += ch + (src[i + 1] || ''); i++; continue; }
+      if (klasse) { if (ch === ']') klasse = false; out += ch; continue; }
+      if (ch === '[') { klasse = true; out += ch; continue; }
+      out += ch === ' ' ? '\\s' : ch;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- Bausteine: feste Prüfungen, die die KI nur auswählt
+  // Telefonnummer nach „Tel.“, „Telefon“, „Fax“ …: die Nummer selbst (ohne Vorwort)
+  const TEL_RE = /(?:\bTel(?:efon)?\.?|\bFax\.?|\bMobil|\bHandy)[ \t\u00a0]*:?[ \t\u00a0]*((?:[(\/]?\d)[\d()\/ \u00a0\u2009\u202f\u2008\u2006-]*\d)/gu;
+  function telefonSpannen(text) {
+    const out = [];
+    TEL_RE.lastIndex = 0;
+    let m;
+    while ((m = TEL_RE.exec(text))) { const s = m.index + m[0].length - m[1].length; out.push([s, s + m[1].length, m[1]]); }
+    return out;
+  }
+  const paare = d => { let o = ''; for (let i = d.length; i > 0; i -= 2) o = d.slice(Math.max(0, i - 2), i) + (o ? ' ' + o : ''); return o; };
+  const ZAHL_RE = /(?<![\p{L}\p{N}.,:\/§\u2009\u202f\u2008\u2006])(\d{1,3}(?:[.\u2009\u202f\u2008\u2006]\d{3})+|\d+)(?![\p{L}\p{N}]|[.,:\/|]\d)/gu;
+  const EINHEIT = /^[\s\u00a0\u2009\u202f]*(?:Euro|€|EUR|Prozent|%|Mio|Millionen|Mrd|Milliarden|Stück|Kilometer|km|Meter|Quadratmeter|m²|Tonnen|Mitglieder|Menschen|Personen|Beschäftigte|Mal)\b/u;
+  const VORWORT = /(?:§§?|\bArt\.|\bAbs\.|\bNr\.|\bAz\.?:?|\bRn\.|\bS\.|\bParagra(?:f|ph)(?:en)?|\bHausnummer|\bPostfach)[\s\u00a0]*$/u;
+  const ACHTEL_ZEICHEN = /[\u2009\u202f\u2008\u2006]/g;
+
+  function bausteinTausender(art, ab) {
+    const sep = art === 'punkt' ? '.' : art === 'achtel' ? '\u2009' : '';
+    const form = d => d.length < ab ? d : d.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+    return text => {
+      const tel = telefonSpannen(text), out = [];
+      ZAHL_RE.lastIndex = 0;
+      let m;
+      while ((m = ZAHL_RE.exec(text))) {
+        const s = m.index, e = s + m[0].length, d = m[0].replace(/\D/g, '');
+        if (d.length < 4 || d[0] === '0' || tel.some(([a, b]) => s >= a && e <= b)) continue;
+        const davor = text.slice(Math.max(0, s - 30), s), danach = text.slice(e, e + 30);
+        if (VORWORT.test(davor)) continue;
+        if (d.length === 5 && !/\D/.test(m[0]) && /^[\s\u00a0]+\p{Lu}\p{Ll}/u.test(danach) && !EINHEIT.test(danach)) continue;   // Postleitzahl vor dem Ort
+        if (d.length === 4 && !/\D/.test(m[0]) && +d >= 1900 && +d <= 2099 && !EINHEIT.test(danach)) continue;   // Jahreszahl
+        const soll = form(d);
+        const ist = art === 'achtel' ? m[0].replace(ACHTEL_ZEICHEN, '\u2009') : m[0];
+        if (ist !== soll) out.push({ s, e, richtig: soll });
+      }
+      return out;
+    };
+  }
+
+  function bausteinTelefon(stil) {
+    return text => telefonSpannen(text).flatMap(([s, e, nr]) => {
+      if (/-/.test(nr)) return [];   // Durchwahl: zu viele Hausformen, die KI prüft
+      let vor, an;
+      const k = /^\(([^)]*)\)(.*)$/.exec(nr), sl = nr.split('/');
+      if (k) { vor = k[1]; an = k[2]; } else if (sl.length === 2) { vor = sl[0]; an = sl[1]; }
+      else { const t = nr.trim().split(/[\s\u00a0\u2009\u202f\u2008\u2006]+/); if (t.length < 2) return []; vor = t[0]; an = t.slice(1).join(''); }
+      vor = vor.replace(/\D/g, ''); an = an.replace(/\D/g, '');
+      if (!vor || !an) return [];
+      const soll = stil === 'klammer' ? '(' + paare(vor) + ') ' + paare(an) : paare(vor) + '/' + paare(an);
+      return nr.replace(/[\u00a0\u2009\u202f\u2008\u2006]/g, ' ') === soll ? [] : [{ s, e, richtig: soll }];
+    });
+  }
+
+  /** „tausender:punkt:4“, „tausender:achtel:4“, „tausender:keiner:4“, „telefon:klammer“, „telefon:schraegstrich“ -> Prüffunktion */
+  function baustein(kennung) {
+    const [name, a, b] = String(kennung || '').trim().toLowerCase().split(':');
+    if (name === 'tausender' && ['punkt', 'achtel', 'keiner'].includes(a)) return bausteinTausender(a, Math.max(4, Number(b) || 4));
+    if (name === 'telefon' && ['klammer', 'schraegstrich'].includes(a)) return bausteinTelefon(a);
+    return null;
+  }
+
   /** Regel -> kompilierte Regel (oder null bei typ "stil" = nur KI). */
   function compileRule(rule) {
     const typ = rule.typ || 'exakt';
@@ -94,11 +167,15 @@
       return { rule, re, schreibweise: true, erlaubt: ok, einzel: erlaubt.filter(einzelwort).concat(erlaubt.filter(einzelwort).map(lowerFirst)),
         versal: nur_versal(erlaubt[0]), skipQuotes: false, literals: [] };
     }
+    if (typ === 'baustein') {
+      const fn = baustein(rule.ersetzen);
+      return fn ? { rule, baustein: fn, skipQuotes: false, literals: [] } : { rule, error: 'Unbekannter Baustein: ' + rule.ersetzen };
+    }
     if (typ === 'stil' || !falsch.length) return null;
     const flags = 'gu' + (rule.case === false ? 'i' : '');
     let source;
     if (typ === 'regex') {
-      source = falsch.map(x => '(?:' + x + ')').join('|');
+      source = falsch.map(x => '(?:' + leerraum(x) + ')').join('|');
     } else {
       // Längste Variante zuerst, damit "Prof. Dr." vor "Prof." greift
       const sorted = falsch.slice().sort((a, b) => b.length - a.length);
@@ -115,7 +192,7 @@
     // je Muster einzeln, damit $1 in jedem Muster die eigene erste Gruppe meint
     let einzelRe = null;
     if (typ === 'regex' && rule.ersetzen) {
-      try { einzelRe = falsch.map(x => new RegExp('^(?:' + x + ')$', flags.replace('g', ''))); } catch (e) { einzelRe = null; }
+      try { einzelRe = falsch.map(x => new RegExp('^(?:' + leerraum(x) + ')$', flags.replace('g', ''))); } catch (e) { einzelRe = null; }
     }
     return {
       rule,
@@ -204,9 +281,22 @@
       }
     }
 
-    // 2) Ersetzungen (falsch -> richtig)
+    // 2) Bausteine (Zahlen, Telefon): die Engine rechnet die richtige Form selbst aus
     for (const c of list) {
-      if (c.schreibweise) continue;
+      if (!c.baustein) continue;
+      const r = c.rule;
+      for (const t of c.baustein(text)) {
+        if (overlaps(urls, t.s, t.e) || inside(geschuetzt, t.s, t.e)) continue;
+        const match = text.slice(t.s, t.e), key = hitKey(r.id, match);
+        if (ignore && ignore.has(key)) continue;
+        candidates.push({ start: t.s, end: t.e, match, ruleId: r.id, richtig: t.richtig, beispiel: '', hinweis: r.hinweis || '', schwere: r.schwere || 'hinweis',
+          quelle: r.quelle || '', key, ersetzbar: true, alle: false });
+      }
+    }
+
+    // 3) Ersetzungen (falsch -> richtig)
+    for (const c of list) {
+      if (c.schreibweise || c.baustein) continue;
       const r = c.rule;
       c.re.lastIndex = 0;
       let m;
@@ -297,6 +387,33 @@
       for (const c of nf) { out += c; map.push(i); }
     }
     return { text: out, map };
+  }
+
+  /**
+   * PDF-Textstücke (pdf.js getTextContent().items) -> Seitentext. InDesign setzt Achtelgeviert und Tabulator oft nicht als Zeichen,
+   * sondern als Lücke: ist die Lücke auf derselben Zeile breiter als ein Achtel der Schrifthöhe, steht ein Leerschritt im Text.
+   * Liefert { text, items: [{ it, start, end }] }.
+   */
+  function pdfText(liste) {
+    let text = '';
+    const items = [];
+    let vorher = null;
+    (liste || []).forEach((it, k) => {
+      // InDesign-Ligaturen (ft, ff, fi …): pdf.js liefert danach ein Leerzeichen mit Breite 0 – kein echtes Wortende
+      const naechstes = liste[k + 1];
+      if (!it.hasEOL && it.str === ' ' && it.width < 0.5 && /\p{L}$/u.test(text) && naechstes && /^\p{Ll}/u.test(naechstes.str)) return;
+      const t = it.transform || [1, 0, 0, 1, 0, 0], h = it.height || Math.hypot(t[2], t[3]) || 10;
+      if (vorher && it.str && text && !/\s$/.test(text) && !/^\s/.test(it.str)) {
+        const v = vorher.transform || t, gleicheZeile = Math.abs(v[5] - t[5]) < h * 0.5;
+        if (gleicheZeile && t[4] - (v[4] + (vorher.width || 0)) > h * 0.12) text += ' ';
+      }
+      const start = text.length;
+      text += it.str;
+      items.push({ it, start, end: text.length });
+      if (it.hasEOL) text += '\n';
+      if (it.str) vorher = it;
+    });
+    return { text, items };
   }
 
   /** check() auf normalisiertem Text, Positionen zurück ins Original gerechnet. */
@@ -432,7 +549,7 @@
     return 'fehler';
   }
 
-  const api = { escapeRe, compileRule, compile, check, checkNormalized, normalize, mergeRules, findConflicts, hitKey,
+  const api = { escapeRe, baustein, pdfText, compileRule, compile, check, checkNormalized, normalize, mergeRules, findConflicts, hitKey,
     blacklistRules, whitelistSet, kategorie, rsAnfragen, regelWoerter, rsWoerter, datumUmrechnen };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.KorrekturEngine = api;
@@ -981,7 +1098,7 @@
     for (const rule of r.rules) {
       const row = document.createElement('label');
       row.className = 'rule';
-      const falsch = rule.typ === 'schreibweise' ? 'abweichende Schreibung' : (rule.falsch || []).join(', ');
+      const falsch = rule.typ === 'schreibweise' ? 'abweichende Schreibung' : rule.typ === 'baustein' ? 'feste Prüfung (' + rule.ersetzen + ')' : (rule.falsch || []).join(', ');
       row.innerHTML = `<input type="checkbox" ${off.has(rule.id) ? '' : 'checked'}>
         <span><span class="r" style="${rule.schwere === 'hinweis' ? 'color:#8a5f00' : ''}">${esc(rule.richtig || (rule.typ === 'stil' ? 'Stil' : ''))}</span>
         ${falsch ? ' <span class="f">statt ' + esc(falsch) + '</span>' : ''}
@@ -1086,7 +1203,9 @@
   // ---------------------------------------------------------------- 4) Prüfen
   async function absaetzeLesen() {
     return Word.run(async ctx => {
-      const ps = ctx.document.body.paragraphs; ps.load('items/text'); await ctx.sync();
+      const ps = ctx.document.body.paragraphs; ps.load('items/text,items/style'); await ctx.sync();
+      // Formatvorlage je Absatz (z. B. „Überschrift 1“) – geht bei „Mit KI prüfen“ mit, „Standard“ zählt nicht
+      S.formate = ps.items.map(p => /^(standard|normal|default paragraph font)$/i.test(p.style || '') ? '' : (p.style || ''));
       return ps.items.map(p => p.text || '');
     });
   }
@@ -1291,7 +1410,7 @@
     $('kiBtn').disabled = true;
     try {
       S.absaetze = await absaetzeLesen();
-      const bloecke = S.absaetze.map((x, i) => ({ id: 'p' + i, text: x })).filter(b => b.text.trim().length >= 20);
+      const bloecke = S.absaetze.map((x, i) => Object.assign({ id: 'p' + i, text: x }, (S.formate || [])[i] ? { format: S.formate[i] } : {})).filter(b => b.text.trim().length >= 20);
       const teile = []; let teil = [], n = 0;
       for (const b of bloecke) { if (teil.length && n + b.text.length > 8000) { teile.push(teil); teil = []; n = 0; } teil.push(b); n += b.text.length; }
       if (teil.length) teile.push(teil);
