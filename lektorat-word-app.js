@@ -549,7 +549,10 @@
     return 'fehler';
   }
 
-  const api = { escapeRe, baustein, pdfText, compileRule, compile, check, checkNormalized, normalize, mergeRules, findConflicts, hitKey,
+  // Version des Word-Lesers (= Satzanweisung.VERSION): Regeln eines älteren Lesers im Zwischenspeicher von Plugin/Add-in gelten als veraltet
+  const LESER_VERSION = 4;
+
+  const api = { LESER_VERSION, escapeRe, baustein, pdfText, compileRule, compile, check, checkNormalized, normalize, mergeRules, findConflicts, hitKey,
     blacklistRules, whitelistSet, kategorie, rsAnfragen, regelWoerter, rsWoerter, datumUmrechnen };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.KorrekturEngine = api;
@@ -1044,7 +1047,8 @@
   async function holeRegeln(sa, lesen) {
     const c = speicher.get('regeln_' + sa.item_id);
     // Zwischenspeicher gilt, solange die Word-Datei unverändert ist (Datum kommt mit der Liste)
-    if (!S.frisch && c && c.geaendert === sa.geaendert && c.daten && c.daten.rules && !(kiFehlte(c.daten) && Date.now() - c.t > 30 * MIN)) return c.daten;
+    // … und mit dem aktuellen Word-Leser gelesen wurde (sonst einmal neu vom Server holen)
+    if (!S.frisch && c && c.geaendert === sa.geaendert && c.daten && c.daten.rules && (c.daten.leser || 0) >= E.LESER_VERSION && !(kiFehlte(c.daten) && Date.now() - c.t > 30 * MIN)) return c.daten;
     const warte = [4, 6, 8, 12, 15, 20, 25, 30, 30, 30];   // wachsender Abstand = weniger n8n-Ausführungen
     for (let i = 0; ; i++) {
       let r;
@@ -1410,7 +1414,9 @@
     $('kiBtn').disabled = true;
     try {
       S.absaetze = await absaetzeLesen();
-      const bloecke = S.absaetze.map((x, i) => Object.assign({ id: 'p' + i, text: x }, (S.formate || [])[i] ? { format: S.formate[i] } : {})).filter(b => b.text.trim().length >= 20);
+      const bloecke = S.absaetze.map((x, i) => Object.assign({ id: 'p' + i, text: x }, (S.formate || [])[i] ? { format: S.formate[i] } : {}))
+        // kurze Absätze nur mit Formatvorlage (Überschriften wie „Urteile“): die KI braucht sie für Rubrik-Ausnahmen
+        .filter(b => b.text.trim().length >= 20 || (b.format && b.text.trim()));
       const teile = []; let teil = [], n = 0;
       for (const b of bloecke) { if (teil.length && n + b.text.length > 8000) { teile.push(teil); teil = []; n = 0; } teil.push(b); n += b.text.length; }
       if (teil.length) teile.push(teil);
