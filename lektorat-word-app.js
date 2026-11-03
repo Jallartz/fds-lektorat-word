@@ -1611,6 +1611,15 @@
     $('pass').addEventListener('keydown', e => { if (e.key === 'Enter') anmelden(); });
     $('logout').addEventListener('click', () => abmelden());
     ['keydown', 'mousedown', 'wheel'].forEach(n => document.addEventListener(n, aktiv, { passive: true, capture: true }));
+    // Aufgabenbereich oder Word schließen: Lektorat sofort freigeben (beim nächsten Öffnen wird es wieder belegt)
+    window.addEventListener('pagehide', () => {
+      if (!S.session) return;
+      try {
+        fetch(CFG.supa + '/rest/v1/rpc/sitzung_beenden', { method: 'POST', keepalive: true,
+          headers: { apikey: CFG.key, Authorization: 'Bearer ' + S.session.access_token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ p_tool: 'lektorat' }) });
+      } catch (e) { /* Fenster schon weg */ }
+    });
     $('de').addEventListener('click', () => { I18n.set('de'); renderHits(); });
     $('en').addEventListener('click', () => { I18n.set('en'); renderHits(); });
     $('settingsBtn').addEventListener('click', () => show('settingsCard', $('settingsCard').classList.contains('hidden')));
