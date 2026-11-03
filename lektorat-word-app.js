@@ -1611,13 +1611,15 @@
     $('pass').addEventListener('keydown', e => { if (e.key === 'Enter') anmelden(); });
     $('logout').addEventListener('click', () => abmelden());
     ['keydown', 'mousedown', 'wheel'].forEach(n => document.addEventListener(n, aktiv, { passive: true, capture: true }));
-    // Aufgabenbereich oder Word schließen: Lektorat sofort freigeben (beim nächsten Öffnen wird es wieder belegt)
+    // Aufgabenbereich oder Word schließen = abmelden: Lektorat freigeben, Login beenden, gespeicherten Login löschen.
+    // keepalive: die Anfragen laufen weiter, auch wenn das Fenster schon weg ist. Beim nächsten Öffnen neu anmelden.
     window.addEventListener('pagehide', () => {
       if (!S.session) return;
+      const h = { apikey: CFG.key, Authorization: 'Bearer ' + S.session.access_token, 'Content-Type': 'application/json' };
+      speicher.del('sitzung');
       try {
-        fetch(CFG.supa + '/rest/v1/rpc/sitzung_beenden', { method: 'POST', keepalive: true,
-          headers: { apikey: CFG.key, Authorization: 'Bearer ' + S.session.access_token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ p_tool: 'lektorat' }) });
+        fetch(CFG.supa + '/rest/v1/rpc/sitzung_beenden', { method: 'POST', keepalive: true, headers: h, body: JSON.stringify({ p_tool: 'lektorat' }) });
+        fetch(CFG.supa + '/auth/v1/logout?scope=local', { method: 'POST', keepalive: true, headers: h });
       } catch (e) { /* Fenster schon weg */ }
     });
     $('de').addEventListener('click', () => { I18n.set('de'); renderHits(); });
