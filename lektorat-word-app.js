@@ -991,11 +991,34 @@
     return (p || []).length > 0;
   }
   async function api(body) {
-    const r = await fetch(CFG.api, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await token() }, body: JSON.stringify(body) });
+    const r = await fetch(CFG.api, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await token() },
+      body: JSON.stringify(Object.assign({}, body, { geraet: 'Word-Add-in' })) });
     const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (e) { /* */ }
-    if (!r.ok) throw Object.assign(new Error((j && j.error) || ([502, 504, 524].includes(r.status)
-      ? 'Der Server hat nicht rechtzeitig geantwortet (HTTP ' + r.status + ') – bitte gleich noch einmal versuchen.' : 'HTTP ' + r.status)), { status: r.status });
+    if (!r.ok) {
+      const fehler = Object.assign(new Error((j && j.error) || ([502, 504, 524].includes(r.status)
+        ? 'Der Server hat nicht rechtzeitig geantwortet (HTTP ' + r.status + ') – bitte gleich noch einmal versuchen.' : 'HTTP ' + r.status)), { status: r.status, grund: j && j.grund });
+      // Sitzungsregel (anderes Gerät, Inaktivität, vom Admin beendet): abmelden, Grund auf der Anmeldeseite
+      if (r.status === 409 || (r.status === 401 && fehler.grund)) abmelden(fehler.message);
+      throw fehler;
+    }
     return j;
+  }
+
+  // ---------------------------------------------------------------- Sitzungsregeln: 15 Minuten Inaktivität, ein Gerät (00_Grundlagen/Sitzungen.sql)
+  const sitzungUhr = { zuletzt: 0, gemeldet: 0, takt: null };
+  const aktiv = () => { sitzungUhr.zuletzt = Date.now(); };
+  function sitzungStarten() {
+    sitzungUhr.zuletzt = sitzungUhr.gemeldet = Date.now();
+    clearInterval(sitzungUhr.takt);
+    sitzungUhr.takt = setInterval(() => {
+      if (!S.session) return;
+      if (Date.now() - sitzungUhr.zuletzt >= 15 * MIN) return abmelden('Wegen 15 Minuten Inaktivität abgemeldet.');
+      // gearbeitet seit der letzten Meldung: höchstens alle 2 Minuten „Ich bin aktiv“ an den Server
+      if (sitzungUhr.zuletzt > sitzungUhr.gemeldet && Date.now() - sitzungUhr.gemeldet >= 2 * MIN) {
+        sitzungUhr.gemeldet = Date.now();
+        api({ action: 'aktiv' }).catch(() => {});
+      }
+    }, 30000);
   }
 
   async function anmelden() {
@@ -1007,14 +1030,26 @@
         body: JSON.stringify({ email: em, password: pw }) });
       sitzung(d);
       if (!(await hatRecht())) { abmelden(); return setStatus($('loginErr'), t('noPerm'), 'err'); }
+      await api({ action: 'aktiv' });   // Sitzungsregel: ein Konto nur einmal gleichzeitig im Lektorat
       $('pass').value = '';
       await starten();
-    } catch (e) { setStatus($('loginErr'), t('loginFail'), 'err'); }
+    } catch (e) {
+      if (e.status === 409 || e.grund) { if (S.session) abmelden(); setStatus($('loginErr'), e.message, 'err'); }
+      else setStatus($('loginErr'), t('loginFail'), 'err');
+    }
     finally { $('loginBtn').disabled = false; }
   }
-  function abmelden() {
+  function abmelden(meldung) {
+    const alt = S.session;
+    clearInterval(sitzungUhr.takt);
     S.session = null; speicher.del('sitzung');
     show('app', false); show('settingsCard', false); show('login', true);
+    setStatus($('loginErr'), typeof meldung === 'string' ? meldung : '', 'err');
+    if (alt) {   // Lektorat freigeben, nur diesen Login beenden (andere Geräte/Tools bleiben angemeldet)
+      const h = { apikey: CFG.key, Authorization: 'Bearer ' + alt.access_token, 'Content-Type': 'application/json' };
+      fetch(CFG.supa + '/rest/v1/rpc/sitzung_beenden', { method: 'POST', headers: h, body: JSON.stringify({ p_tool: 'lektorat' }) })
+        .catch(() => {}).then(() => fetch(CFG.supa + '/auth/v1/logout?scope=local', { method: 'POST', headers: h })).catch(() => {});
+    }
   }
 
   // ---------------------------------------------------------------- 2) Satzanweisungen (zwischengespeichert)
@@ -1552,11 +1587,13 @@
   // ---------------------------------------------------------------- Start
   let liveTimer = null, auswahlTimer = null;
   function auswahlGeaendert() {
+    aktiv();   // Arbeiten im Dokument (Cursor, Tippen) zählt als Aktivität
     clearTimeout(auswahlTimer); auswahlTimer = setTimeout(holeAuswahl, 250);
     if (S.opt.live && S.regeln) { clearTimeout(liveTimer); liveTimer = setTimeout(() => pruefen(true), 2000); }   // „Beim Tippen mitprüfen“
   }
   async function starten() {
     show('login', false); show('app', true);
+    sitzungStarten();
     $('who').textContent = (S.session && S.session.email) || '';
     try {
       await Word.run(async ctx => { ctx.document.onAnnotationClicked.add(klickAufMarkierung); await ctx.sync(); });
@@ -1572,7 +1609,8 @@
     $('optLt').checked = S.opt.lt; $('optNachverfolgen').checked = S.opt.nachverfolgen; $('anzeigen').checked = S.opt.anzeigen; $('live').checked = S.opt.live;
     $('loginBtn').addEventListener('click', anmelden);
     $('pass').addEventListener('keydown', e => { if (e.key === 'Enter') anmelden(); });
-    $('logout').addEventListener('click', abmelden);
+    $('logout').addEventListener('click', () => abmelden());
+    ['keydown', 'mousedown', 'wheel'].forEach(n => document.addEventListener(n, aktiv, { passive: true, capture: true }));
     $('de').addEventListener('click', () => { I18n.set('de'); renderHits(); });
     $('en').addEventListener('click', () => { I18n.set('en'); renderHits(); });
     $('settingsBtn').addEventListener('click', () => show('settingsCard', $('settingsCard').classList.contains('hidden')));
@@ -1624,7 +1662,8 @@
     await I18n.init();
     verdrahten();
     if (S.session) {
-      try { if (await hatRecht()) return starten(); } catch (e) { /* abgelaufen */ }
+      try { if (await hatRecht()) { await api({ action: 'aktiv' }); return starten(); } }
+      catch (e) { if (e.status === 409 || e.grund) return; /* api() hat mit Grund abgemeldet */ }
       abmelden();
     } else { show('login', true); }
   }
