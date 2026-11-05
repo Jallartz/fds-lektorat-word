@@ -280,6 +280,11 @@
           hinweis: r.hinweis || '', schwere: r.schwere || 'fehler', quelle: r.quelle || '', key, ersetzbar: !!r.richtig, alle: !!r.richtig && !r.ki });
       }
     }
+    // Eine kurze Schreibweise („dbb“) streicht nichts an, was in einer längeren richtigen Schreibweise steht („DBB NRW“)
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const k = candidates[i];
+      if (geschuetzt.some(([a, b]) => a <= k.start && k.end <= b && b - a > k.end - k.start)) candidates.splice(i, 1);
+    }
 
     // 2) Bausteine (Zahlen, Telefon): die Engine rechnet die richtige Form selbst aus
     for (const c of list) {
