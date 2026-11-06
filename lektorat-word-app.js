@@ -89,7 +89,7 @@
 
   // ---------------------------------------------------------------- Bausteine: feste Prüfungen, die die KI nur auswählt
   // Telefonnummer nach „Tel.“, „Telefon“, „Fax“ …: die Nummer selbst (ohne Vorwort)
-  const TEL_RE = /(?:\bTel(?:efon)?\.?|\bFax\.?|\bMobil|\bHandy)[ \t\u00a0]*:?[ \t\u00a0]*((?:[(\/]?\d)[\d()\/ \u00a0\u2009\u202f\u2008\u2006-]*\d)/gu;
+  const TEL_RE = /(?:\b[Tt]el(?:efon(?:isch)?)?\.?(?:[ \t\u00a0]+unter)?|\bFax\.?|\bHot(?:line|fax)|\bMobil|\bHandy)[ \t\u00a0]*:?[ \t\u00a0]*((?:[(\/]?\d)[\d()\/. \u00a0\u2009\u202f\u2008\u2006-]*\d)/gu;
   function telefonSpannen(text) {
     const out = [];
     TEL_RE.lastIndex = 0;
@@ -129,21 +129,22 @@
     return text => telefonSpannen(text).flatMap(([s, e, nr]) => {
       if (/-/.test(nr)) return [];   // Durchwahl: zu viele Hausformen, die KI prüft
       let vor, an;
-      const k = /^\(([^)]*)\)(.*)$/.exec(nr), sl = nr.split('/');
-      if (k) { vor = k[1]; an = k[2]; } else if (sl.length === 2) { vor = sl[0]; an = sl[1]; }
+      const k = /^\(([^)]*)\)(.*)$/.exec(nr), sl = nr.split('/'), pk = nr.split('.');
+      if (k) { vor = k[1]; an = k[2]; } else if (sl.length === 2) { vor = sl[0]; an = sl[1]; } else if (pk.length === 2) { vor = pk[0]; an = pk[1]; }
       else { const t = nr.trim().split(/[\s\u00a0\u2009\u202f\u2008\u2006]+/); if (t.length < 2) return []; vor = t[0]; an = t.slice(1).join(''); }
       vor = vor.replace(/\D/g, ''); an = an.replace(/\D/g, '');
       if (!vor || !an) return [];
-      const soll = stil === 'klammer' ? '(' + paare(vor) + ') ' + paare(an) : paare(vor) + '/' + paare(an);
+      // punkt: „01234.56789“ (Vorwahl.Anschluss, ohne Gruppen) – nur wenn die Vorwahl im Text schon abgetrennt ist; sonst prüft die KI
+      const soll = stil === 'klammer' ? '(' + paare(vor) + ') ' + paare(an) : stil === 'punkt' ? vor + '.' + an : paare(vor) + '/' + paare(an);
       return nr.replace(/[\u00a0\u2009\u202f\u2008\u2006]/g, ' ') === soll ? [] : [{ s, e, richtig: soll }];
     });
   }
 
-  /** „tausender:punkt:4“, „tausender:achtel:4“, „tausender:keiner:4“, „telefon:klammer“, „telefon:schraegstrich“ -> Prüffunktion */
+  /** „tausender:punkt:4“, „tausender:achtel:4“, „tausender:keiner:4“, „telefon:klammer“, „telefon:schraegstrich“, „telefon:punkt“ -> Prüffunktion */
   function baustein(kennung) {
     const [name, a, b] = String(kennung || '').trim().toLowerCase().split(':');
     if (name === 'tausender' && ['punkt', 'achtel', 'keiner'].includes(a)) return bausteinTausender(a, Math.max(4, Number(b) || 4));
-    if (name === 'telefon' && ['klammer', 'schraegstrich'].includes(a)) return bausteinTelefon(a);
+    if (name === 'telefon' && ['klammer', 'schraegstrich', 'punkt'].includes(a)) return bausteinTelefon(a);
     return null;
   }
 
@@ -555,7 +556,7 @@
   }
 
   // Version des Word-Lesers (= Satzanweisung.VERSION): Regeln eines älteren Lesers im Zwischenspeicher von Plugin/Add-in gelten als veraltet
-  const LESER_VERSION = 4;
+  const LESER_VERSION = 5;
 
   const api = { LESER_VERSION, escapeRe, baustein, pdfText, compileRule, compile, check, checkNormalized, normalize, mergeRules, findConflicts, hitKey,
     blacklistRules, whitelistSet, kategorie, rsAnfragen, regelWoerter, rsWoerter, datumUmrechnen };
